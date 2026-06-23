@@ -1,0 +1,20 @@
+[Unit]
+Description=Evinizinkocu Backend Service
+After=network.target
+
+[Service]
+Type=simple
+# Gelecekteki deploylarda 'app' ismiyle build aldığımızı varsayıyoruz
+ExecStart=/home/ubuntu/apps/evinizinkocu-backend/app
+WorkingDirectory=/home/ubuntu/apps/evinizinkocu-backend
+Restart=always
+RestartSec=5
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=evinizinkocu
+
+# Ortam değişkenlerini .env dosyasından okur
+EnvironmentFile=/home/ubuntu/apps/evinizinkocu-backend/.env
+
+[Install]
+WantedBy=multi-user.target

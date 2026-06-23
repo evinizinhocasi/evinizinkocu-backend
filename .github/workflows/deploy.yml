@@ -1,0 +1,47 @@
+name: Deploy Backend
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # --- GitHub'da derleme kontrolü ---
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+      - name: Build Check
+        run: go build -v ./...
+
+      # --- Sunucuya SSH ile bağlanıp deploy etme ---
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # 1. Proje dizinine git
+            cd /home/ubuntu/apps/evinizinkocu-backend
+            
+            # 2. Gitteki değişiklikleri çek
+            git pull
+            
+            # 3. Eski binary'yi sil
+            rm -f app
+            
+            # 4. Baştan derle
+            /usr/local/go/bin/go build -a -v -o app cmd/api/main.go
+            
+            # 5. Binary'ye yetki ver
+            chmod +x app
+            
+            # 6. Servisi yeniden başlat
+            sudo systemctl restart evinizinkocu
+            
+            # 7. Durumu kontrol et
+            sudo systemctl status evinizinkocu --no-pager
