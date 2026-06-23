@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: evinizinkocu_postgres
+    environment:
+      POSTGRES_USER: evinizinkocu_user
+      POSTGRES_PASSWORD: evinizinkocu_password
+      POSTGRES_DB: evinizinkocu_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evinizinkocu_user -d evinizinkocu_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: evinizinkocu_backend
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DB_DSN=postgres://evinizinkocu_user:evinizinkocu_password@postgres:5432/evinizinkocu_db?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:-super_secret_key_change_me_in_production}
+      - REFRESH_JWT_SECRET=${REFRESH_JWT_SECRET:-super_secret_refresh_key_change_me_in_production}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-test@example.com}
+      - SMTP_PASS=${SMTP_PASS:-testpass}
+      - SMTP_FROM=${SMTP_FROM:-no-reply@evinizinkocu.com}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
