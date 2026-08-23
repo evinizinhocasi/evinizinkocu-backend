@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"evinizinkocu-backend/internal/domain"
 	"evinizinkocu-backend/internal/infrastructure/jwt"
 	"evinizinkocu-backend/internal/infrastructure/mailer"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,6 +30,7 @@ type TokenResponse struct {
 
 type AuthService struct {
 	repo             domain.UserRepository
+	coachRepo        domain.CoachRepository
 	mailer           mailer.Mailer
 	jwtSecret        string
 	refreshSecret    string
@@ -37,11 +40,13 @@ type AuthService struct {
 
 func NewAuthService(
 	repo domain.UserRepository,
+	coachRepo domain.CoachRepository,
 	m mailer.Mailer,
 	jwtSecret, refreshSecret string,
 ) *AuthService {
 	return &AuthService{
 		repo:            repo,
+		coachRepo:       coachRepo,
 		mailer:          m,
 		jwtSecret:       jwtSecret,
 		refreshSecret:   refreshSecret,
@@ -65,12 +70,6 @@ func (s *AuthService) Login(ctx context.Context, identifier, password string) (*
 
 	if !domain.CheckPasswordHash(password, u.PasswordHash) {
 		return nil, domain.ErrInvalidCredentials
-	}
-
-	// For coach check expiry
-	if u.Role == domain.RoleCoach {
-		// We will implement coach check later when writing CoachService or within the DB layer.
-		// For now we check if they are disabled. If a coach is passive, they cannot log in.
 	}
 
 	// Generate Access Token
@@ -103,49 +102,157 @@ func (s *AuthService) Login(ctx context.Context, identifier, password string) (*
 	}, nil
 }
 
-func (s *AuthService) RefreshToken(ctx context.Context, tokenStr string) (*TokenResponse, error) {
-	rt, err := s.repo.GetRefreshToken(ctx, tokenStr)
+func (s *AuthService) RegisterCoach(
+	ctx context.Context,
+	firstName, lastName, phone, email, password, city, specialization string,
+) (*LoginResponse, error) {
+	firstName = strings.TrimSpace(firstName)
+	lastName = strings.TrimSpace(lastName)
+	phone = strings.TrimSpace(phone)
+	email = strings.ToLower(strings.TrimSpace(email))
+	city = strings.TrimSpace(city)
+	specialization = strings.TrimSpace(specialization)
+
+	if firstName == "" || lastName == "" || email == "" || password == "" || phone == "" {
+		return nil, errors.New("tüm zorunlu alanları doldurunuz")
+	}
+
+	// 1. Check uniqueness
+	if _, err := s.repo.GetByEmail(ctx, email); err == nil {
+		return nil, domain.ErrEmailConflict
+	}
+	if _, err := s.repo.GetByPhone(ctx, phone); err == nil {
+		return nil, domain.ErrPhoneConflict
+	}
+
+	// 2. Generate unique username
+	baseUsername := strings.ToLower(strings.ReplaceAll(firstName+lastName, " ", ""))
+	baseUsername = s.turkishToEnglish(baseUsername)
+	if baseUsername == "" {
+		baseUsername = "koc"
+	}
+	username := baseUsername
+	suffix := 1
+
+	for {
+		_, err := s.repo.GetByUsername(ctx, username)
+		if errors.Is(err, domain.ErrUserNotFound) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		username = fmt.Sprintf("%s%d", baseUsername, suffix)
+		suffix++
+	}
+
+	// 3. Hash password
+	hashedPassword, err := domain.HashPassword(password)
 	if err != nil {
-		return nil, domain.ErrUnauthorized
-	}
-
-	if rt.IsRevoked || rt.ExpiresAt.Before(time.Now()) {
-		// Enforce rotating refresh token rule: revoke all user refresh tokens on theft detection
-		_ = s.repo.RevokeAllUserRefreshTokens(ctx, rt.UserID)
-		return nil, domain.ErrUnauthorized
-	}
-
-	// Revoke current token
-	if err := s.repo.RevokeRefreshToken(ctx, tokenStr); err != nil {
 		return nil, err
 	}
 
-	// Get User
+	// 4. Create User
+	userID := uuid.New().String()
+	user := &domain.User{
+		ID:                 userID,
+		Email:              email,
+		Username:           username,
+		Phone:              phone,
+		PasswordHash:       hashedPassword,
+		FirstName:          firstName,
+		LastName:           lastName,
+		Role:               domain.RoleCoach,
+		IsActive:           true,
+		MustChangePassword: false,
+	}
+
+	if err := s.repo.Create(ctx, user); err != nil {
+		return nil, err
+	}
+
+	// 5. Create Coach with StudentCapacity = 1 (FREE 1-Student Capacity)
+	coach := &domain.Coach{
+		ID:                      userID,
+		City:                    city,
+		Biography:               "",
+		Specialization:          specialization,
+		SocialLinks:             "{}",
+		StudentCapacity:         1, // Free Tier: 1 Student
+		AuthStartDate:           time.Now(),
+		AuthEndDate:             time.Now().AddDate(50, 0, 0),
+		PermissionImmediatePush: true,
+		PermissionScheduledPush: true,
+	}
+
+	if err := s.coachRepo.CreateCoach(ctx, coach); err != nil {
+		return nil, err
+	}
+
+	// 6. Generate Tokens for immediate login
+	accessToken, err := jwt.GenerateAccessToken(user.ID, user.Role, user.Email, s.jwtSecret, s.accessDuration)
+	if err != nil {
+		return nil, fmt.Errorf("failed generating access token: %w", err)
+	}
+
+	rawRefreshTokenBytes := make([]byte, 32)
+	if _, err := rand.Read(rawRefreshTokenBytes); err != nil {
+		return nil, err
+	}
+	rawRefreshToken := fmt.Sprintf("%x", rawRefreshTokenBytes)
+
+	rt := &domain.RefreshToken{
+		UserID:    user.ID,
+		Token:     rawRefreshToken,
+		ExpiresAt: time.Now().Add(s.refreshDuration),
+	}
+
+	if err := s.repo.SaveRefreshToken(ctx, rt); err != nil {
+		return nil, fmt.Errorf("failed saving refresh token: %w", err)
+	}
+
+	return &LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: rawRefreshToken,
+		User:         user,
+	}, nil
+}
+
+func (s *AuthService) RefreshToken(ctx context.Context, token string) (*TokenResponse, error) {
+	rt, err := s.repo.GetRefreshToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+
+	if rt.IsRevoked || time.Now().After(rt.ExpiresAt) {
+		return nil, errors.New("refresh token expired or revoked")
+	}
+
 	u, err := s.repo.GetByID(ctx, rt.UserID)
 	if err != nil {
-		return nil, domain.ErrUnauthorized
+		return nil, err
 	}
 
 	if !u.IsActive {
 		return nil, domain.ErrPassiveAccount
 	}
 
-	// Generate Access Token
-	newAccessToken, err := jwt.GenerateAccessToken(u.ID, u.Role, u.Email, s.jwtSecret, s.accessDuration)
+	accessToken, err := jwt.GenerateAccessToken(u.ID, u.Role, u.Email, s.jwtSecret, s.accessDuration)
 	if err != nil {
 		return nil, err
 	}
 
-	// Generate new Refresh Token
 	rawRefreshTokenBytes := make([]byte, 32)
 	if _, err := rand.Read(rawRefreshTokenBytes); err != nil {
 		return nil, err
 	}
-	newRawRefreshToken := fmt.Sprintf("%x", rawRefreshTokenBytes)
+	newRefreshToken := fmt.Sprintf("%x", rawRefreshTokenBytes)
+
+	_ = s.repo.RevokeRefreshToken(ctx, token)
 
 	newRt := &domain.RefreshToken{
 		UserID:    u.ID,
-		Token:     newRawRefreshToken,
+		Token:     newRefreshToken,
 		ExpiresAt: time.Now().Add(s.refreshDuration),
 	}
 
@@ -154,12 +261,12 @@ func (s *AuthService) RefreshToken(ctx context.Context, tokenStr string) (*Token
 	}
 
 	return &TokenResponse{
-		AccessToken:  newAccessToken,
-		RefreshToken: newRawRefreshToken,
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
 	}, nil
 }
 
-func (s *AuthService) Logout(ctx context.Context, refreshToken, deviceToken string, userID string) error {
+func (s *AuthService) Logout(ctx context.Context, refreshToken, deviceToken, userID string) error {
 	if refreshToken != "" {
 		_ = s.repo.RevokeRefreshToken(ctx, refreshToken)
 	}
@@ -193,20 +300,17 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 	u, err := s.repo.GetByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, domain.ErrUserNotFound) {
-			// Do not leak email existence, return nil
 			return nil
 		}
 		return err
 	}
 
-	// Generate 6 digit numeric code
 	codeVal, err := rand.Int(rand.Reader, big.NewInt(900000))
 	if err != nil {
 		return err
 	}
 	code := fmt.Sprintf("%06d", codeVal.Int64()+100000)
 
-	// Hash code before saving
 	codeHashBytes, err := bcrypt.GenerateFromPassword([]byte(code), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -217,7 +321,6 @@ func (s *AuthService) ForgotPassword(ctx context.Context, email string) error {
 		return err
 	}
 
-	// Send SMTP
 	go func() {
 		_ = s.mailer.SendResetPasswordCode(u.Email, code)
 	}()
@@ -236,13 +339,11 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, code, newPasswor
 		return errors.New("geçersiz veya süresi dolmuş kod")
 	}
 
-	// Validate code hash
 	err = bcrypt.CompareHashAndPassword([]byte(prc.CodeHash), []byte(code))
 	if err != nil {
 		return errors.New("geçersiz kod")
 	}
 
-	// Update password
 	hashed, err := domain.HashPassword(newPassword)
 	if err != nil {
 		return err
@@ -254,7 +355,6 @@ func (s *AuthService) ResetPassword(ctx context.Context, email, code, newPasswor
 		return err
 	}
 
-	// Mark used
 	return s.repo.MarkResetCodeUsed(ctx, prc.ID)
 }
 
@@ -265,4 +365,12 @@ func (s *AuthService) RegisterDeviceToken(ctx context.Context, userID, token, pl
 		Platform: platform,
 	}
 	return s.repo.SaveDeviceToken(ctx, dt)
+}
+
+func (s *AuthService) turkishToEnglish(str string) string {
+	r := strings.NewReplacer(
+		"ı", "i", "ğ", "g", "ü", "u", "ş", "s", "ö", "o", "ç", "c",
+		"İ", "i", "Ğ", "g", "Ü", "u", "Ş", "s", "Ö", "o", "Ç", "c",
+	)
+	return r.Replace(str)
 }

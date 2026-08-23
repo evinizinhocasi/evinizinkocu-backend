@@ -23,6 +23,7 @@ func NewAuthHandler(authService *application.AuthService) *AuthHandler {
 
 func (h *AuthHandler) RegisterRoutes(r chi.Router, authMiddleware func(http.Handler) http.Handler) {
 	r.Post("/api/v1/auth/login", h.Login)
+	r.Post("/api/v1/auth/register-coach", h.RegisterCoach)
 	r.Post("/api/v1/auth/refresh", h.Refresh)
 	r.Post("/api/v1/auth/forgot-password", h.ForgotPassword)
 	r.Post("/api/v1/auth/reset-password", h.ResetPassword)
@@ -68,6 +69,56 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(res)
+}
+
+type registerCoachRequest struct {
+	FirstName      string `json:"first_name"`
+	LastName       string `json:"last_name"`
+	Phone          string `json:"phone"`
+	Email          string `json:"email"`
+	Password       string `json:"password"`
+	City           string `json:"city"`
+	Specialization string `json:"specialization"`
+}
+
+func (h *AuthHandler) RegisterCoach(w http.ResponseWriter, r *http.Request) {
+	var req registerCoachRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, `{"error": "Geçersiz istek gövdesi"}`, http.StatusBadRequest)
+		return
+	}
+
+	if req.FirstName == "" || req.LastName == "" || req.Email == "" || req.Password == "" || req.Phone == "" {
+		http.Error(w, `{"error": "Lütfen tüm zorunlu alanları doldurun"}`, http.StatusBadRequest)
+		return
+	}
+
+	res, err := h.authService.RegisterCoach(
+		r.Context(),
+		req.FirstName,
+		req.LastName,
+		req.Phone,
+		req.Email,
+		req.Password,
+		req.City,
+		req.Specialization,
+	)
+	if err != nil {
+		if errors.Is(err, domain.ErrEmailConflict) {
+			http.Error(w, `{"error": "Bu e-posta adresi zaten kullanılmaktadır"}`, http.StatusConflict)
+			return
+		}
+		if errors.Is(err, domain.ErrPhoneConflict) {
+			http.Error(w, `{"error": "Bu telefon numarası zaten kullanılmaktadır"}`, http.StatusConflict)
+			return
+		}
+		http.Error(w, fmt.Sprintf(`{"error": "%s"}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(res)
 }
 

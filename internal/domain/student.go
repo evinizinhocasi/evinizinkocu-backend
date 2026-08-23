@@ -11,24 +11,29 @@ var (
 )
 
 type Student struct {
-	ID          string    `json:"id"`
-	User        *User     `json:"user,omitempty"`
-	CoachID     string    `json:"coach_id"`
-	CoachName   string    `json:"coach_name"`
-	ClassLevel  string    `json:"class_level"` // e.g. 12, mezun
-	StudyTrack  string    `json:"study_track"`  // 'Sayisal', 'Sozel', 'Esit Agirlik', 'Dil'
-	ExamTypeID   string    `json:"exam_type_id"`
-	ExamTypeName string    `json:"exam_type_name"`
-	ExamType     *ExamType `json:"exam_type,omitempty"`
-	IsArchived   bool      `json:"is_archived"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	User              *User     `json:"user,omitempty"`
+	CoachID           string    `json:"coach_id"`
+	CoachName         string    `json:"coach_name"`
+	ClassLevel        string    `json:"class_level"` // e.g. 12, mezun
+	StudyTrack        string    `json:"study_track"`  // 'Sayisal', 'Sozel', 'Esit Agirlik', 'Dil'
+	ExamTypeID        string    `json:"exam_type_id"`
+	ExamTypeName      string    `json:"exam_type_name"`
+	ExamType          *ExamType `json:"exam_type,omitempty"`
+	TargetSchoolID    *string   `json:"target_school_id,omitempty"`
+	TargetSchoolName  string    `json:"target_school_name"`
+	TargetSchoolPhoto string    `json:"target_school_photo"`
+	TargetSchoolType  string    `json:"target_school_type"`
+	IsArchived        bool      `json:"is_archived"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type StudentRepository interface {
 	CreateStudent(ctx context.Context, student *Student) error
 	GetStudentByID(ctx context.Context, id string) (*Student, error)
 	UpdateStudent(ctx context.Context, student *Student) error
+	UpdateTargetSchool(ctx context.Context, studentID string, targetSchoolID *string, targetSchoolName, targetSchoolPhoto, targetSchoolType string) error
 	ListStudentsByCoach(ctx context.Context, coachID string, includeArchived bool) ([]*Student, error)
 	ListAllStudents(ctx context.Context) ([]*Student, error)
 

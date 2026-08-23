@@ -13,6 +13,7 @@ import (
 	"evinizinkocu-backend/internal/infrastructure/fcm"
 	"evinizinkocu-backend/internal/infrastructure/mailer"
 	"evinizinkocu-backend/internal/infrastructure/repository"
+	"evinizinkocu-backend/internal/infrastructure/storage"
 	"evinizinkocu-backend/internal/middleware"
 	transport "evinizinkocu-backend/internal/transport/http"
 	"evinizinkocu-backend/internal/worker"
@@ -50,13 +51,16 @@ func main() {
 	paymentRepo := repository.NewPostgresPaymentRepository(database.Pool)
 	notifRepo := repository.NewPostgresNotificationRepository(database.Pool)
 	cmsRepo := repository.NewPostgresCMSRepository(database.Pool)
+	wrongQuestionRepo := repository.NewPostgresWrongQuestionRepository(database.Pool)
+	targetSchoolRepo := repository.NewPostgresTargetSchoolRepository(database.Pool)
 
-	// 5. Initialize Infrastructure Services (SMTP & FCM)
+	// 5. Initialize Infrastructure Services (SMTP, FCM & Cloudflare R2 Storage)
 	mailerService := mailer.NewSMTPMailer(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPUser, cfg.SMTPPass, cfg.SMTPFrom)
 	fcmService := fcm.NewGoogleFCMService(cfg.FirebaseCredentialJSON)
+	r2Storage := storage.NewR2Storage(cfg)
 
 	// 6. Initialize Application Services
-	authService := application.NewAuthService(userRepo, mailerService, cfg.JWTSecret, cfg.RefreshJWTSecret)
+	authService := application.NewAuthService(userRepo, coachRepo, mailerService, cfg.JWTSecret, cfg.RefreshJWTSecret)
 	coachService := application.NewCoachService(coachRepo, userRepo, mailerService, cfg.MailTo)
 	studentService := application.NewStudentService(studentRepo, userRepo, coachRepo, mailerService)
 	catalogService := application.NewCatalogService(catalogRepo)
@@ -66,6 +70,9 @@ func main() {
 	notifService := application.NewNotificationService(notifRepo, studentRepo, userRepo, coachRepo, fcmService)
 	cmsService := application.NewCMSService(cmsRepo)
 	dashboardService := application.NewDashboardService(database.Pool)
+	wrongQuestionService := application.NewWrongQuestionService(wrongQuestionRepo, studentRepo, r2Storage)
+	targetSchoolService := application.NewTargetSchoolService(targetSchoolRepo, studentRepo, r2Storage)
+	monthlyReportService := application.NewMonthlyReportService(database.Pool, studentRepo)
 
 	// 7. Start Background Workers
 	notifWorker := worker.NewNotificationWorker(notifRepo, studentRepo, userRepo, coachRepo, fcmService, notifService)
@@ -157,6 +164,15 @@ func main() {
 
 	dashboardHandler := transport.NewDashboardHandler(dashboardService)
 	dashboardHandler.RegisterRoutes(r, authMiddleware)
+
+	wrongQuestionHandler := transport.NewWrongQuestionHandler(wrongQuestionService)
+	wrongQuestionHandler.RegisterRoutes(r, authMiddleware)
+
+	targetSchoolHandler := transport.NewTargetSchoolHandler(targetSchoolService)
+	targetSchoolHandler.RegisterRoutes(r, authMiddleware)
+
+	monthlyReportHandler := transport.NewMonthlyReportHandler(monthlyReportService, studentRepo)
+	monthlyReportHandler.RegisterRoutes(r, authMiddleware)
 
 	// 10. Start Server
 	serverAddr := ":" + cfg.Port

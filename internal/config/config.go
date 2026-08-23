@@ -21,6 +21,11 @@ type Config struct {
 	SMTPFrom               string
 	MailTo                 string
 	FirebaseCredentialJSON string
+	R2AccountID            string
+	R2AccessKeyID          string
+	R2SecretAccessKey      string
+	R2BucketName           string
+	R2PublicURL            string
 }
 
 func LoadConfig() *Config {
@@ -60,6 +65,11 @@ func LoadConfig() *Config {
 		SMTPFrom:               getEnv("SMTP_FROM", smtpUser),
 		MailTo:                 getEnv("MAIL_TO", "info@evinizinhocasi.com"),
 		FirebaseCredentialJSON: getEnv("FIREBASE_CREDENTIALS_JSON", ""),
+		R2AccountID:            getEnv("R2_ACCOUNT_ID", ""),
+		R2AccessKeyID:          getEnv("R2_ACCESS_KEY_ID", ""),
+		R2SecretAccessKey:      getEnv("R2_SECRET_ACCESS_KEY", ""),
+		R2BucketName:           getEnv("R2_BUCKET_NAME", ""),
+		R2PublicURL:            getEnv("R2_PUBLIC_URL", ""),
 	}
 }
 

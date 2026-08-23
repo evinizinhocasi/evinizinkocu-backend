@@ -13,6 +13,12 @@ import (
 //go:embed migrations/000001_init.up.sql
 var initSQL string
 
+//go:embed migrations/000002_wrong_questions.up.sql
+var wrongQuestionsSQL string
+
+//go:embed migrations/000003_target_schools.up.sql
+var targetSchoolsSQL string
+
 func RunMigrations(db *Database) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -20,8 +26,8 @@ func RunMigrations(db *Database) error {
 	log.Println("Running database migrations...")
 
 	// Clean up comments and execute statements
-	// Note: Simple split by semicolon is fine for our schema since we don't have triggers/stored routines using semicolons inside statements.
-	queries := strings.Split(initSQL, ";")
+	allSQL := initSQL + "\n" + wrongQuestionsSQL + "\n" + targetSchoolsSQL
+	queries := strings.Split(allSQL, ";")
 	for _, query := range queries {
 		q := strings.TrimSpace(query)
 		if q == "" {
