@@ -8,28 +8,18 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # 1. GitHub Actions üzerinde derleme kontrolü
       - uses: actions/checkout@v4
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.22'
 
-      # 1. Compile the binary on the GitHub Actions runner for Linux AMD64
-      - name: Build Binary
-        run: env GOOS=linux GOARCH=amd64 go build -a -v -o app cmd/api/main.go
+      - name: Build Check
+        run: go build -v ./...
 
-      # 2. Copy the compiled binary 'app' to the server using the existing SSH credentials
-      - name: Copy Binary via SCP
-        uses: appleboy/scp-action@master
-        with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: "app"
-          target: "/home/ubuntu/apps/evinizinkocu-backend/"
-
-      # 3. Connect to the server to pull other changes and restart the service
-      - name: Restart Service via SSH
+      # 2. Sunucuya SSH ile bağlanıp deploy etme
+      - name: Deploy to Server via SSH
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -40,16 +30,21 @@ jobs:
             # 1. Proje dizinine git
             cd /home/ubuntu/apps/evinizinkocu-backend
             
-            # 2. Gitteki değişiklikleri çek
+            # 2. Gitteki değişiklikleri temizle ve çek
             git reset --hard
             git pull
             
-            # 3. Binary'ye yetki ver
+            # 3. Eski binary'yi sil
+            rm -f app
+            
+            # 4. Baştan derle
+            /usr/local/go/bin/go build -a -v -o app cmd/api/main.go || go build -a -v -o app cmd/api/main.go
+            
+            # 5. Binary'ye yetki ver
             chmod +x app
             
-            # 4. Servisi yeniden başlat
+            # 6. Servisi yeniden başlat
             sudo systemctl restart evinizinkocu
             
-            # 5. Durumu kontrol et
+            # 7. Durumu kontrol et
             sudo systemctl status evinizinkocu --no-pager
-
